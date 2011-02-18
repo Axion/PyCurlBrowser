@@ -2,25 +2,23 @@
 """PyCurlBrowser module is used to simultaneously fetch thousands of pages
 in real world, where urllib fails because of hanging sockets"""
 
-# pylint: disable=R0902,W0142,R0903,R0201,R0914,R0912,R0915
-import os
-import time
+# pylint: disable=R0902,W0142,R0903,R0201,R0914,R0912,R0915,R0913
+
+import cStringIO
 import hashlib
-import pycurl
-import logging
-import zlib
 import json
+import logging
+import os
+import pycurl
 import re
+import time
+import zlib
 
 from warnings import warn
 
 from lxml.html.soupparser import fromstring
 from lxml import etree
 
-from lxml.html import tostring
-
-
-import cStringIO
 
 class ConnectionsNumberWarning(UserWarning):
     """Number of connections is too big"""
@@ -114,7 +112,6 @@ class Browser(object):
         # It's required if you set 'cache_method' to 'forever' of 'expire'
         self.cache_root = kwargs.get("cache_root", None)
 
-
         # Time in seconds for cache to expire, will be used only if
         # cache_method = 'expire', default = 10 minutes
         self.cache_expiration = kwargs.get("cache_expiration", 600)
@@ -167,7 +164,6 @@ class Browser(object):
             curl.setopt(pycurl.FOLLOWLOCATION, 1)
             curl.setopt(pycurl.MAXREDIRS, 5)
 
-
         curl.setopt(pycurl.CONNECTTIMEOUT, self.connection_timeout)
         curl.setopt(pycurl.TIMEOUT, self.transfer_timeout)
 
@@ -192,12 +188,12 @@ class Browser(object):
         headers.append("Accept-Encoding: gzip,deflate")
         headers.append("Accept-Charset: utf-8, windows-1251;q=0.7,*;q=0.7")
 
-        headers.append("""Referer: http://jobsearch.monster.com/PowerSearch.aspx
-        ?q=python&rad=20&rad_units=miles&tm=14&dv=0&sort=sal&pp=100&pg=4""")
-        
+        referer = """Referer: http://jobsearch.monster.com/PowerSearch.aspx
+        ?q=python&rad=20&rad_units=miles&tm=14&dv=0&sort=sal&pp=100&pg=4"""
+        headers.append(referer)
+
         headers.append("Keep-Alive: 115")
         headers.append("Connection: keep-alive")
-
 
         curl.setopt(pycurl.HTTPHEADER, headers)
 
@@ -221,13 +217,12 @@ class Browser(object):
 
         return data
 
-
     def __get_filename(self, url, method):
         """Construct filename for cache"""
         url_hash = hashlib.md5(url).hexdigest()
         return os.path.join(self.cache_root, url_hash) + "." + method
 
-    def __load_cached_response(self, url, method, id = None):
+    def __load_cached_response(self, url, method, uid=None):
         """Save data if caching is enabled"""
 
         if self.cache_method == 'never':
@@ -243,9 +238,10 @@ class Browser(object):
             time.time() - os.path.getmtime(filename) < self.cache_expiration:
             cached = True
 
-
         if cached:
-            self.logger.debug("Getting page %s from cache: %s" % (url, filename))
+            self.logger.debug("Getting page %s from cache: %s" %
+                              (url, filename))
+
             data = open(filename).read()
             metadata = json.load(open(filename + ".meta"))
 
@@ -256,13 +252,12 @@ class Browser(object):
                        'url': metadata["url"],
                        'code': metadata["code"],
                        'content_type': metadata["content_type"],
-                       'id' : id}
+                       'id': uid}
 
             return Struct(**result)
 
         else:
             return None
-
 
     def __set_request_params(self, params, url, method, curl):
         """Set params for GET or POST request"""
@@ -279,7 +274,7 @@ class Browser(object):
             url = url + "?" + params_str
         # PyCurl can accept only strings, but url can be unicode object
         return str(url)
-                        
+
     def fetch(self, url, method="GET", ref=None, **kwargs):
         """Get data of one page by performing GET or POST request, result value
         is a dict"""
@@ -327,7 +322,6 @@ class Browser(object):
 
         return result
 
-
     def __cache_response(self, data):
         """Save response data and request metadata if caching is enabled"""
         filename = self.__get_filename(data.url, data.method)
@@ -342,7 +336,6 @@ class Browser(object):
                 'url': data.url
             }, open(filename + ".meta", 'w'))
 
-            
     def multi_fetch(self, url_requests, num_conn=100, percentile=100):
         """Get no more than 'percentile' % of requested urls,
         limiting simultaneously connections to 'num_conn'
@@ -388,11 +381,12 @@ class Browser(object):
             if len(url) > 1024:
                 warn("URLs longer than 1024 characters are ignored",
                      UrlTooLongWarning)
-                
+
                 results[url] = Struct({'result': 'error'})
                 continue
 
-            result = self.__load_cached_response(url, "GET", entry.get("id", None))
+            result = self.__load_cached_response(url, "GET",
+                                                 entry.get("id", None))
             if result:
                 results[url] = result
                 continue
@@ -433,7 +427,7 @@ class Browser(object):
         freelist = mcurl.handles[:]
         num_processed = 0
         bailout = 0
-        
+
         while num_processed < num_urls:
 
             # Got enough results
@@ -446,7 +440,7 @@ class Browser(object):
                 url = str(url_data["url"])
 
                 curl = freelist.pop()
-   
+
                 curl.setopt(pycurl.URL, url)
                 curl.res = cStringIO.StringIO()
                 curl.setopt(pycurl.WRITEFUNCTION, curl.res.write)
@@ -457,7 +451,7 @@ class Browser(object):
                     curl.setopt(pycurl.REFERER, url_data["ref"])
 
                 mcurl.add_handle(curl)
-                
+
                 curl.url = url
                 curl.id = url_data["id"]
 
@@ -491,7 +485,10 @@ class Browser(object):
                     results[curl.url] = result
 
                     if self.cache_method in ["expire", "forever"]:
-                        data_file = open(self.__get_filename(curl.url, "GET"), 'w')
+
+                        data_file = \
+                            open(self.__get_filename(curl.url, "GET"), 'w')
+
                         data_file.write(data)
                         data_file.close()
 
@@ -508,7 +505,7 @@ class Browser(object):
                                             'id': curl.id,
                                             'url': curl.url})
                     freelist.append(curl)
-                    
+
                 num_processed = num_processed + len(ok_list) + len(err_list)
 
                 if num_urls:
@@ -518,13 +515,12 @@ class Browser(object):
 
                 if not num_q:
                     break
-                    
+
             mcurl.select(1.0)
 
         mcurl.close()
 
         return results
-
 
     def __extract_data(self, element, extractor):
         """Actual parsing and extraction of data from lxml element or string"""
@@ -538,7 +534,7 @@ class Browser(object):
                 if "xpath" in info or "xpath_multi" in info:
                     data_xml = fromstring(element)
                     break
-                    
+
         # if we got tree element and we need to perform regexp
         else:
 
@@ -549,7 +545,6 @@ class Browser(object):
                     data_str = etree.tostring(element)
                     break
 
-                    
         result = dict()
 
         for field, info in extractor.fields.items():
@@ -561,10 +556,10 @@ class Browser(object):
                     result[field] = felement.attrib[info["attrib"]]
                 else:
                     result[field] = felement.xpath("string()").\
-                    replace("\\n","\n").\
-                    replace("\\t","\t").\
-                    replace("\\r","\r").strip()
-                
+                    replace("\\n", "\n").\
+                    replace("\\t", "\t").\
+                    replace("\\r", "\r").strip()
+
             elif "regexp" in info:
                 groups = re.search(info["regexp"], data_str)
                 res = groups.group("content")
@@ -579,7 +574,9 @@ class Browser(object):
                 elements = data_xml.xpath(info["xpath_multi"])
                 results = list()
                 for felement in elements:
-                    results.append(Struct(**self.__extract_data(felement, info["items"])))
+                    results.append(
+                        Struct(**self.__extract_data(felement, info["items"]))
+                    )
 
                 result[field] = results
 
@@ -587,7 +584,8 @@ class Browser(object):
 
     def extract(self, data, extractor):
         """Get parts of page and return as Struct"""
-        return Struct(**self.__extract_data(data.encode('string_escape'), extractor))
+        return Struct(**self.__extract_data(data.encode('string_escape'),
+                                                                    extractor))
 
 
 class ParserNotConfigured(Exception):
@@ -600,30 +598,36 @@ class SearchParser(object):
     contains info about total page count and every page contains some elements
     you wish to extract"""
 
+    # pylint: disable=W0613
     def _construct_url(self, num):
         """You need to override this function and provide your own
         which can construct url base on it's 'base' part and page number passed
         as 'num'
         """
         raise ParserNotConfigured("You need to override _construct_url")
+    # pylint: enable=W0613
 
     def __extract_page_data(self, data):
+        """Transform string data of web page into python object"""
         return self.browser.extract(data, self.__data_extractor)
 
     def __get_page_count(self, data):
+        """Get count of pages which can be fetched"""
         return self.browser.extract(data, self.__count_extractor).count
 
     def __get_page(self, num):
-        return self.browser.fetch(self._construct_url(num)).data
+        """Get data of one page by it's number in search result"""
+        data = self.browser.fetch(self._construct_url(num))
+        return data.data
 
     def fetch(self):
-
+        """Get and return data, return as struct"""
         results = list()
 
         data = self.__get_page(1)
         results.append(self.__extract_page_data(data))
 
-        count = int(self.__get_page_count(data) )
+        count = int(self.__get_page_count(data))
 
         if self.max_pages:
             pages = xrange(2, max(self.max_pages, count) - 4)
@@ -636,12 +640,12 @@ class SearchParser(object):
 
             if self.stop_word in data:
                 break
-            
+
         return results
 
     def __init__(self, browser, count_extractor, data_extractor,
                  max_pages=None, stop_word=None):
-        
+
         self.browser = browser
         self.__count_extractor = count_extractor
         self.__data_extractor = data_extractor
@@ -650,6 +654,7 @@ class SearchParser(object):
 
 
 class Extractor(object):
+    """This class should be extended to provide custom parsing functionality"""
     def __init__(self, fields):
         self.fields = fields
 

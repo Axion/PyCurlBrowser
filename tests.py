@@ -2,7 +2,6 @@ import unittest
 
 from curlbrowser import Browser, CacheConfigurationException
 
-"""
 class CacheConfigured(unittest.TestCase):
     def runTest(self):
 
@@ -26,8 +25,6 @@ class FetchOne(unittest.TestCase):
         self.assertEqual(data.result, "ok")
         self.assertEqual(data.code, 200)
         #self.assertIn("google", data.data)
-
-"""
 
 class FetchMany(unittest.TestCase):
     def runTest(self):
@@ -60,9 +57,7 @@ class FetchMany(unittest.TestCase):
         from pprint import pprint
         pprint(entries)
 
-        #self.assertEqual(data.result, "ok")
-        #self.assertEqual(data.code, 200)
-
-
+        self.assertEqual(len(entries), 3)
+        
 if __name__ == '__main__':
     unittest.main()        
