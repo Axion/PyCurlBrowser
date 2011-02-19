@@ -123,8 +123,8 @@ class Browser(object):
         # By default browser will desguise as Firefox 3.6 on Ubuntu
         # you can user_agent string for any browser
         # from http://www.user-agents.org/
-        user_agent = """User-Agent: Mozilla/5.0 (Macintosh; U; Intel Mac OS X
-         10.6; ru; rv:1.9.2.13) Gecko/20101203 Firefox/3.6.13"""
+        user_agent = "User-Agent: Mozilla/5.0 (Macintosh; U; Intel" \
+        "Mac OS X 10.6; ru; rv:1.9.2.13) Gecko/20101203 Firefox/3.6.13"
 
         self.user_agent = kwargs.get("user_agent", user_agent)
 
@@ -179,19 +179,14 @@ class Browser(object):
             curl.setopt(pycurl.COOKIEFILE, self.cookies_file)
             curl.setopt(pycurl.COOKIEJAR, self.cookies_file)
 
-        accept = """Accept: text/html,application/xhtml+xml,
-        application/xml;q=0.9,*/*;q=0.8"""
+        accept = "Accept: text/html,application/xhtml+xml"\
+        ",application/xml;q=0.9,*/*;q=0.8"
 
         headers = list()
         headers.append("Accept: %s" % accept)
         headers.append("Accept-Language: ru-ru,ru;q=0.8,en-us;q=0.5,en;q=0.3")
         headers.append("Accept-Encoding: gzip,deflate")
         headers.append("Accept-Charset: utf-8, windows-1251;q=0.7,*;q=0.7")
-
-        referer = """Referer: http://jobsearch.monster.com/PowerSearch.aspx
-        ?q=python&rad=20&rad_units=miles&tm=14&dv=0&sort=sal&pp=100&pg=4"""
-        headers.append(referer)
-
         headers.append("Keep-Alive: 115")
         headers.append("Connection: keep-alive")
 
@@ -494,8 +489,6 @@ class Browser(object):
 
                     freelist.append(curl)
 
-                    time.sleep(3.0)
-
                 for curl, errno, errmsg in err_list:
                     self.logger.debug("Error fetching %s" % curl.url)
                     curl.fp = None
@@ -550,30 +543,51 @@ class Browser(object):
         for field, info in extractor.fields.items():
 
             if "xpath" in info:
-                felement = data_xml.xpath(info["xpath"])[0]
+                try:
+                    felement = data_xml.xpath(info["xpath"])[0]
 
-                if "attrib" in info:
-                    result[field] = felement.attrib[info["attrib"]]
-                else:
-                    result[field] = felement.xpath("string()").\
-                    replace("\\n", "\n").\
-                    replace("\\t", "\t").\
-                    replace("\\r", "\r").strip()
+                    if "attrib" in info:
+                        res = felement.attrib[info["attrib"]]
+
+                        if "parser" in info:
+                            res = info["parser"](res)
+
+                        result[field] = res
+                    else:
+                        res = felement.xpath("string()").\
+                        replace("\\n", "\n").\
+                        replace("\\t", "\t").\
+                        replace("\\r", "\r").strip()
+
+                        if "parser" in info:
+                            res = info["parser"](res)
+
+                        result[field] = res
+
+                except IndexError:
+                    self.logger.exception("Couldn't execute xpath search")
+                    result[field] = None
 
             elif "regexp" in info:
                 groups = re.search(info["regexp"], data_str)
-                res = groups.group("content")
+                try:
+                    res = groups.group("content")
 
-                # USe parser if provided
-                if "parser" in info:
-                    res = info["parser"](res)
+                    # Use parser if provided
+                    if "parser" in info:
+                        res = info["parser"](res)
 
-                result[field] = res
+                    result[field] = res
 
-            elif "xpath_multi":
+                except AttributeError:
+                    self.logger.exception("Couldn't execute regexp")
+                    result[field] = None
+
+            elif "xpath_multi" in info:
                 elements = data_xml.xpath(info["xpath_multi"])
                 results = list()
                 for felement in elements:
+
                     results.append(
                         Struct(**self.__extract_data(felement, info["items"]))
                     )
@@ -598,6 +612,16 @@ class SearchParser(object):
     contains info about total page count and every page contains some elements
     you wish to extract"""
 
+    # Extractor instance to get page count
+    count_extractor = None
+
+    # Extractor instance to get data from listing page or link in
+    # case of useing page_data_Extractor
+    list_data_extractor = None
+
+    # Extractor instance to get data from every info page
+    page_data_extractor = None
+
     # pylint: disable=W0613
     def _construct_url(self, num):
         """You need to override this function and provide your own
@@ -609,11 +633,11 @@ class SearchParser(object):
 
     def __extract_page_data(self, data):
         """Transform string data of web page into python object"""
-        return self.browser.extract(data, self.__data_extractor)
+        return self.browser.extract(data, self.list_data_extractor)
 
     def __get_page_count(self, data):
         """Get count of pages which can be fetched"""
-        return self.browser.extract(data, self.__count_extractor).count
+        return self.browser.extract(data, self.count_extractor).count
 
     def __get_page(self, num):
         """Get data of one page by it's number in search result"""
@@ -625,30 +649,45 @@ class SearchParser(object):
         results = list()
 
         data = self.__get_page(1)
-        results.append(self.__extract_page_data(data))
+        results.extend(self.__extract_page_data(data).items)
+        
+        if self.count_extractor:
+            count = int(self.__get_page_count(data))
 
-        count = int(self.__get_page_count(data))
+            if self.max_pages:
+                pages = xrange(2, max(self.max_pages, count) - 4)
+            else:
+                pages = xrange(2, count - 1)
 
-        if self.max_pages:
-            pages = xrange(2, max(self.max_pages, count) - 4)
         else:
-            pages = xrange(2, count - 1)
+            pages = xrange(2, self.max_pages + 1)
 
         for page_num in pages:
             data = self.__get_page(page_num)
-            results.append(self.__extract_page_data(data))
 
-            if self.stop_word in data:
+            results.extend(self.__extract_page_data(data).items)
+
+            if self.stop_word and self.stop_word in data:
                 break
 
-        return results
+        if not self.page_data_extractor:
+            return results
+        else:
+            lresults = list()
+            links = [{"url": link.link} for link in results]
+            entries = self.browser.multi_fetch(links, num_conn=5)
 
-    def __init__(self, browser, count_extractor, data_extractor,
-                 max_pages=None, stop_word=None):
+            for url, entry in entries.items():
+                data = self.browser.extract(entry.data,
+                                            self.page_data_extractor)
+                data.link = url
+                lresults.append(data)
+
+            return lresults
+
+    def __init__(self, browser, max_pages=None, stop_word=None):
 
         self.browser = browser
-        self.__count_extractor = count_extractor
-        self.__data_extractor = data_extractor
         self.max_pages = max_pages
         self.stop_word = stop_word
 
