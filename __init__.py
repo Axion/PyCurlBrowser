@@ -448,7 +448,11 @@ class Browser(object):
                 mcurl.add_handle(curl)
 
                 curl.url = url
-                curl.id = url_data["id"]
+
+                if id in url_data:
+                    curl.id = url_data["id"]
+                else:
+                    curl.id = None
 
             while 1:
                 ret, _ = mcurl.perform()
@@ -488,6 +492,7 @@ class Browser(object):
                         data_file.close()
 
                     freelist.append(curl)
+                    time.sleep(1.0)
 
                 for curl, errno, errmsg in err_list:
                     self.logger.debug("Error fetching %s" % curl.url)
@@ -515,6 +520,19 @@ class Browser(object):
 
         return results
 
+
+    def __get_str(self, element, info):
+        """
+        res = element.xpath("string()").\
+        replace("\\n", "\n").\
+        replace("\\t", "\t").\
+        replace("\\r", "\r").strip()
+        """
+        if "parser" in info:
+            element = info["parser"](element)
+
+        return element
+
     def __extract_data(self, element, extractor):
         """Actual parsing and extraction of data from lxml element or string"""
 
@@ -524,7 +542,7 @@ class Browser(object):
             data_str = element
 
             for field, info in extractor.fields.items():
-                if "xpath" in info or "xpath_multi" in info:
+                if "xpath" in info:
                     data_xml = fromstring(element)
                     break
 
@@ -543,30 +561,62 @@ class Browser(object):
         for field, info in extractor.fields.items():
 
             if "xpath" in info:
-                try:
-                    felement = data_xml.xpath(info["xpath"])[0]
 
-                    if "attrib" in info:
-                        res = felement.attrib[info["attrib"]]
+                if not "mode" in info or info["mode"] == "single":
+                    try:
+                        felement = data_xml.xpath(info["xpath"])[0]
+                        """
+                        if "attrib" in info:
+                            res = felement.attrib[info["attrib"]]
 
-                        if "parser" in info:
-                            res = info["parser"](res)
+                            if "parser" in info:
+                                res = info["parser"](res)
 
-                        result[field] = res
-                    else:
-                        res = felement.xpath("string()").\
-                        replace("\\n", "\n").\
-                        replace("\\t", "\t").\
-                        replace("\\r", "\r").strip()
+                            result[field] = res
+                        else:
+                            res = felement.xpath("string()").\
+                            replace("\\n", "\n").\
+                            replace("\\t", "\t").\
+                            replace("\\r", "\r").strip()
 
-                        if "parser" in info:
-                            res = info["parser"](res)
+                            if "parser" in info:
+                                res = info["parser"](res)
 
-                        result[field] = res
+                            result[field] = res
+                        """
 
-                except IndexError:
-                    self.logger.exception("Couldn't execute xpath search")
-                    result[field] = None
+                        result[field] = unicode(self.__get_str(felement, info))
+
+                    except IndexError:
+                        self.logger.exception("Couldn't execute xpath search [%s]" % info["xpath"])
+                        result[field] = None
+                        
+                elif info["mode"] == "multi":
+
+                    self.logger.debug("xpath_multi [%s]" % info["xpath"])
+                    elements = data_xml.xpath(info["xpath"])
+                    results = list()
+                    for felement in elements:
+                        self.logger.debug("Found new element")
+                        results.append(
+                            self.__get_str(felement, info)
+                        )
+
+                    result[field] = results
+                    
+                elif info["mode"] == "loop":
+                    
+                    self.logger.debug("xpath_multi [%s]" % info["xpath_multi"])
+                    elements = data_xml.xpath(info["xpath_multi"])
+                    results = list()
+                    for felement in elements:
+                        self.logger.debug("Found new element")
+
+                        results.append(
+                            Struct(**self.__extract_data(felement, info["items"]))
+                        )
+
+                    result[field] = results
 
             elif "regexp" in info:
                 groups = re.search(info["regexp"], data_str)
@@ -577,126 +627,41 @@ class Browser(object):
                     if "parser" in info:
                         res = info["parser"](res)
 
-                    result[field] = res
+                    result[field] = unicode(res)
 
                 except AttributeError:
                     self.logger.exception("Couldn't execute regexp")
                     result[field] = None
 
-            elif "xpath_multi" in info:
-                elements = data_xml.xpath(info["xpath_multi"])
-                results = list()
-                for felement in elements:
-
-                    results.append(
-                        Struct(**self.__extract_data(felement, info["items"]))
-                    )
-
-                result[field] = results
-
         return result
 
     def extract(self, data, extractor):
         """Get parts of page and return as Struct"""
-        return Struct(**self.__extract_data(data.encode('string_escape'),
-                                                                    extractor))
+        #return Struct(**self.__extract_data(data.encode('string_escape'),
+        return Struct(**self.__extract_data(data, extractor))
 
 
-class ParserNotConfigured(Exception):
-    """Raised when one of the required functions is not overrided"""
-    pass
 
 
-class SearchParser(object):
-    """Object that can crawl typical search results where first page
-    contains info about total page count and every page contains some elements
-    you wish to extract"""
+def init_simple_logger():
 
-    # Extractor instance to get page count
-    count_extractor = None
+    browser_logger = logging.getLogger("Browser")
+    browser_logger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    browser_logger.addHandler(handler)
 
-    # Extractor instance to get data from listing page or link in
-    # case of useing page_data_Extractor
-    list_data_extractor = None
+    search_logger = logging.getLogger("SearchParser")
+    search_logger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    search_logger.addHandler(handler)
 
-    # Extractor instance to get data from every info page
-    page_data_extractor = None
-
-    # pylint: disable=W0613
-    def _construct_url(self, num):
-        """You need to override this function and provide your own
-        which can construct url base on it's 'base' part and page number passed
-        as 'num'
-        """
-        raise ParserNotConfigured("You need to override _construct_url")
-    # pylint: enable=W0613
-
-    def __extract_page_data(self, data):
-        """Transform string data of web page into python object"""
-        return self.browser.extract(data, self.list_data_extractor)
-
-    def __get_page_count(self, data):
-        """Get count of pages which can be fetched"""
-        return self.browser.extract(data, self.count_extractor).count
-
-    def __get_page(self, num):
-        """Get data of one page by it's number in search result"""
-        data = self.browser.fetch(self._construct_url(num))
-        return data.data
-
-    def fetch(self):
-        """Get and return data, return as struct"""
-        results = list()
-
-        data = self.__get_page(1)
-        results.extend(self.__extract_page_data(data).items)
-        
-        if self.count_extractor:
-            count = int(self.__get_page_count(data))
-
-            if self.max_pages:
-                pages = xrange(2, max(self.max_pages, count) - 4)
-            else:
-                pages = xrange(2, count - 1)
-
-        else:
-            pages = xrange(2, self.max_pages + 1)
-
-        for page_num in pages:
-            data = self.__get_page(page_num)
-
-            results.extend(self.__extract_page_data(data).items)
-
-            if self.stop_word and self.stop_word in data:
-                break
-
-        if not self.page_data_extractor:
-            return results
-        else:
-            lresults = list()
-            links = [{"url": link.link} for link in results]
-            entries = self.browser.multi_fetch(links, num_conn=5)
-
-            for url, entry in entries.items():
-                data = self.browser.extract(entry.data,
-                                            self.page_data_extractor)
-                data.link = url
-                lresults.append(data)
-
-            return lresults
-
-    def __init__(self, browser, max_pages=None, stop_word=None):
-
-        self.browser = browser
-        self.max_pages = max_pages
-        self.stop_word = stop_word
-
-
-class Extractor(object):
-    """This class should be extended to provide custom parsing functionality"""
-    def __init__(self, fields):
-        self.fields = fields
-
+    return browser_logger, search_logger
 
 """
 logger = logging.getLogger("Browser")

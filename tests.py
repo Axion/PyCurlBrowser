@@ -34,7 +34,6 @@ class FetchMany(unittest.TestCase):
 
         browser = Browser(**config)
 
-
         urls = [{
                     "url": "http://google.com/",
                     "ref": "http://google.com/",
