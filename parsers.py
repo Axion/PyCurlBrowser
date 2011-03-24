@@ -69,17 +69,21 @@ class ListParser(object):
         results.extend(self.__extract_page_data(data).items)
 
         if self.count_extractor:
-            count = int(self.__get_page_count(data))
+            ct = self.__get_page_count(data)
+            print "CT=",ct
 
-            if self.max_pages:
-                pages = xrange(2, max(self.max_pages, count) - 4)
+            if not ct:
+                pages = []
             else:
-                pages = xrange(2, count - 1)
+                count = int(ct)
+
+                if self.max_pages:
+                    pages = xrange(2, max(self.max_pages, count) - 4)
+                else:
+                    pages = xrange(2, count - 1)
 
         else:
             pages = xrange(2, self.max_pages + 1)
-
-        print("Page range: %s" % pages)
 
         for page_num in pages:
             data = self.__get_page(page_num)

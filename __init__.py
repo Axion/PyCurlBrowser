@@ -16,6 +16,7 @@ import zlib
 
 from warnings import warn
 
+import lxml
 from lxml.html.soupparser import fromstring
 from lxml import etree
 
@@ -528,7 +529,7 @@ class Browser(object):
         replace("\\t", "\t").\
         replace("\\r", "\r").strip()
         """
-        if "parser" in info:
+        if "parser" in info and element:
             element = info["parser"](element)
 
         return element
@@ -564,26 +565,19 @@ class Browser(object):
 
                 if not "mode" in info or info["mode"] == "single":
                     try:
-                        felement = data_xml.xpath(info["xpath"])[0]
-                        """
-                        if "attrib" in info:
-                            res = felement.attrib[info["attrib"]]
+                        data_list = list()
 
-                            if "parser" in info:
-                                res = info["parser"](res)
+                        for entry in data_xml.xpath(info["xpath"]):
 
-                            result[field] = res
-                        else:
-                            res = felement.xpath("string()").\
-                            replace("\\n", "\n").\
-                            replace("\\t", "\t").\
-                            replace("\\r", "\r").strip()
-
-                            if "parser" in info:
-                                res = info["parser"](res)
-
-                            result[field] = res
-                        """
+                            if isinstance(entry, etree._ElementStringResult) \
+                            or isinstance(entry, etree._ElementUnicodeResult) \
+                            or isinstance(entry, unicode)\
+                            or isinstance(entry, str):
+                                data_list.append(entry)
+                            else:
+                                data_list.append(lxml.html.tostring(entry))
+ 
+                        felement = "".join(data_list)
 
                         result[field] = unicode(self.__get_str(felement, info))
 
@@ -597,7 +591,6 @@ class Browser(object):
                     elements = data_xml.xpath(info["xpath"])
                     results = list()
                     for felement in elements:
-                        self.logger.debug("Found new element")
                         results.append(
                             self.__get_str(felement, info)
                         )
@@ -610,7 +603,6 @@ class Browser(object):
                     elements = data_xml.xpath(info["xpath_multi"])
                     results = list()
                     for felement in elements:
-                        self.logger.debug("Found new element")
 
                         results.append(
                             Struct(**self.__extract_data(felement, info["items"]))
