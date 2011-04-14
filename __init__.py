@@ -302,22 +302,34 @@ class Browser(object):
         headers = cStringIO.StringIO()
         curl.setopt(pycurl.HEADERFUNCTION, headers.write)
 
-        curl.perform()
-        data = self.__normalize_data(strbuff.getvalue(), headers.getvalue())
+        try:
+            curl.perform()
+            data = self.__normalize_data(strbuff.getvalue(), headers.getvalue())
 
-        result = Struct(**{'result': 'ok',
+            result = Struct(**{
+                'result': 'ok',
                 'source': 'web',
-                'data': data,
-                'code': curl.getinfo(pycurl.HTTP_CODE),
+                'data'  : data,
+                'code'  : curl.getinfo(pycurl.HTTP_CODE),
                 'content_type': curl.getinfo(pycurl.CONTENT_TYPE),
-                'url': url,
-                'method': method
-        })
+                'url'   : url,
+                'method': method,
+            })
 
-        self.__cache_response(result)
+            result.file = self.__cache_response(result)
 
-        return result
+            return result
+        except pycurl.error:
+            self.logger.exception("Error downloading page")
+            return Struct(**{'result': 'error',
+                    'source': 'web',
+                    'data': None,
+                    'code': curl.getinfo(pycurl.HTTP_CODE),
+                    'url': url,
+                    'method': method
+            })
 
+            
     def __cache_response(self, data):
         """Save response data and request metadata if caching is enabled"""
         filename = self.__get_filename(data.url, data.method)
@@ -331,6 +343,9 @@ class Browser(object):
                 'content_type': data.content_type,
                 'url': data.url
             }, open(filename + ".meta", 'w'))
+
+
+            return filename
 
     def multi_fetch(self, url_requests, num_conn=100, percentile=100):
         """Get no more than 'percentile' % of requested urls,
@@ -480,8 +495,9 @@ class Browser(object):
                        'method': "GET"
                     })
 
-                    self.__cache_response(result)
-
+                    
+                    result.file = self.__cache_response(result)
+                    
                     results[curl.url] = result
 
                     if self.cache_method in ["expire", "forever"]:
@@ -544,7 +560,12 @@ class Browser(object):
 
             for field, info in extractor.fields.items():
                 if "xpath" in info:
-                    data_xml = fromstring(element)
+                    try:
+                        data_xml = fromstring(element)
+                    except:
+                        data_xml = None
+                        self.logger.exception("Couldn't parse element")
+
                     break
 
         # if we got tree element and we need to perform regexp
@@ -563,12 +584,12 @@ class Browser(object):
 
             if "xpath" in info:
 
+                # Get one element, "mode" can be ommited in this case
                 if not "mode" in info or info["mode"] == "single":
                     try:
                         data_list = list()
 
                         for entry in data_xml.xpath(info["xpath"]):
-
                             if isinstance(entry, etree._ElementStringResult) \
                             or isinstance(entry, etree._ElementUnicodeResult) \
                             or isinstance(entry, unicode)\
@@ -588,12 +609,15 @@ class Browser(object):
                 elif info["mode"] == "multi":
 
                     self.logger.debug("xpath_multi [%s]" % info["xpath"])
-                    elements = data_xml.xpath(info["xpath"])
                     results = list()
-                    for felement in elements:
-                        results.append(
-                            self.__get_str(felement, info)
-                        )
+
+                    if data_xml is not None:
+                        elements = data_xml.xpath(info["xpath"])
+
+                        for felement in elements:
+                            results.append(
+                                self.__get_str(felement, info)
+                            )
 
                     result[field] = results
                     
@@ -625,6 +649,9 @@ class Browser(object):
                     self.logger.exception("Couldn't execute regexp")
                     result[field] = None
 
+        # add lxml reference for additional document parsing by user
+        result["lxml_handle"] = data_xml
+
         return result
 
     def extract(self, data, extractor):
@@ -646,6 +673,14 @@ def init_simple_logger():
     browser_logger.addHandler(handler)
 
     search_logger = logging.getLogger("SearchParser")
+    search_logger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    search_logger.addHandler(handler)
+
+    search_logger = logging.getLogger("ListParser")
     search_logger.setLevel(logging.DEBUG)
     handler = logging.StreamHandler()
     handler.setLevel(logging.DEBUG)

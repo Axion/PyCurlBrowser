@@ -24,6 +24,24 @@ class ParserNotConfigured(Exception):
     """Raised when one of the required functions is not overrided"""
     pass
 
+class SimpleParser(object):
+    """Parser thet extracts data from single page
+
+    Example: You want to extrac every image or link from a single page
+    """
+
+    # Extractor instance to get data from listing page or link in
+    # case of useing page_data_Extractor
+    data_extractor = None
+
+    def __init__(self, browser):
+        self.browser = browser
+        self.logger = logging.getLogger("SimpleParser")
+
+    def fetch(self, url):
+        data = self.browser.fetch(url).data
+        return self.browser.extract(data, self.data_extractor)
+    
 
 class ListParser(object):
     """Use this parser if you want to get data from any kind of multi-page
@@ -62,36 +80,59 @@ class ListParser(object):
         return data.data
 
     def fetch(self):
-        """Get and return data, return as struct"""
+        """Get and return data as struct"""
         results = list()
 
         data = self.__get_page(1)
         results.extend(self.__extract_page_data(data).items)
 
-        if self.count_extractor:
-            ct = self.__get_page_count(data)
-            print "CT=",ct
 
-            if not ct:
-                pages = []
-            else:
-                count = int(ct)
+        if self.count_extractor or self.max_pages:
+            """If we can get maximum number of pages or we have a known last page"""
+            if self.count_extractor:
+                ct = self.__get_page_count(data)
 
-                if self.max_pages:
-                    pages = xrange(2, max(self.max_pages, count) - 4)
+                self.logger.info("Last page num is %s" % ct)
+
+                if not ct:
+                    pages = []
                 else:
-                    pages = xrange(2, count - 1)
+                    count = int(ct)
+
+                    if self.max_pages:
+                        pages = xrange(2, max(self.max_pages, count) - 4)
+                    else:
+                        pages = xrange(2, count - 1)
+
+            else:
+                pages = xrange(2, self.max_pages + 1)
+
+            for page_num in pages:
+                self.logger.debug("Working on page %s" % page_num)
+                data = self.__get_page(page_num)
+
+                results.extend(self.__extract_page_data(data).items)
+
+                if self.stop_word and self.stop_word in data:
+                    break
 
         else:
-            pages = xrange(2, self.max_pages + 1)
+            """Last page can'be guessed untill it's reached, iterate untill we found it by using stop_function"""
 
-        for page_num in pages:
-            data = self.__get_page(page_num)
+            if not self.stop_function(data):
+                """First page may be the last. no need to fetch page 2 in this case"""
+                page_num = 2
+                while True:
+                    self.logger.debug("Working on page %s" % page_num)
+                    data = self.__get_page(page_num)
 
-            results.extend(self.__extract_page_data(data).items)
+                    results.extend(self.__extract_page_data(data).items)
 
-            if self.stop_word and self.stop_word in data:
-                break
+                    if self.stop_function(data):
+                        break
+
+                    page_num += 1
+
 
         return results
 
@@ -100,7 +141,7 @@ class ListParser(object):
         self.browser = browser
         self.max_pages = max_pages
         self.stop_word = stop_word
-        self.logger = logging.getLogger("SearchParser")
+        self.logger = logging.getLogger("ListParser")
 
 
 class SearchParser(ListParser):
@@ -126,14 +167,16 @@ class SearchParser(ListParser):
                                         self.page_data_extractor)
                 data.link = url
                 lresults.append(data)
-            except:
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except etree.XPathEvalError:
                 self.logger.exception("Couldn't exract page data")
 
         return lresults
 
 class Extractor(object):
-    """This class should be extended to provide custom parsing functionality
-    You shoukd init it with a dict, where every key is a name of resulting
+    """This class may be extended to provide custom parsing functionality
+    You should init it with a dict, where every key is a name of resulting
     field and it's value is a dict with one of the parsing options. like this
 
     Extractor({
