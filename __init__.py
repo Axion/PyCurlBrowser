@@ -205,7 +205,6 @@ class Browser(object):
 
         if headers.get("Content-Encoding", "") == "gzip":
             try:
-                self.logger.debug("decompressimg gzip stream")
                 # Sometimes server can report gzip but send plain text
                 data = zlib.decompress(data, 15 + 32)
             except zlib.error:
@@ -224,7 +223,10 @@ class Browser(object):
         if self.cache_method == 'never':
             return None
 
-        filename = self.__get_filename(url, method)
+        try:
+            filename = self.__get_filename(url, method)
+        except:
+            return None
 
         cached = False
         if self.cache_method == "forever" and os.path.exists(filename):
@@ -302,35 +304,50 @@ class Browser(object):
         headers = cStringIO.StringIO()
         curl.setopt(pycurl.HEADERFUNCTION, headers.write)
 
-        curl.perform()
-        data = self.__normalize_data(strbuff.getvalue(), headers.getvalue())
+        try:
+            curl.perform()
+            data = self.__normalize_data(strbuff.getvalue(), headers.getvalue())
 
-        result = Struct(**{'result': 'ok',
+            result = Struct(**{
+                'result': 'ok',
                 'source': 'web',
-                'data': data,
-                'code': curl.getinfo(pycurl.HTTP_CODE),
+                'data'  : data,
+                'code'  : curl.getinfo(pycurl.HTTP_CODE),
                 'content_type': curl.getinfo(pycurl.CONTENT_TYPE),
-                'url': url,
-                'method': method
-        })
+                'url'   : url,
+                'method': method,
+            })
 
-        self.__cache_response(result)
+            result.file = self.__cache_response(result)
 
-        return result
+            return result
+        except pycurl.error:
+            self.logger.exception("Error downloading page")
+            return Struct(**{'result': 'error',
+                    'source': 'web',
+                    'data': None,
+                    'code': curl.getinfo(pycurl.HTTP_CODE),
+                    'url': url,
+                    'method': method
+            })
 
+            
     def __cache_response(self, data):
         """Save response data and request metadata if caching is enabled"""
-        filename = self.__get_filename(data.url, data.method)
-
         if self.cache_method in ["expire", "forever"]:
-            data_file = open(filename, 'w')
-            data_file.write(data.data)
-            data_file.close()
+            filename = self.__get_filename(data.url, data.method)
+            if data.data:
+                data_file = open(filename, 'w')
+                data_file.write(data.data)
+                data_file.close()
 
-            json.dump({'code': data.code,
-                'content_type': data.content_type,
+            json.dump({'code': data.code if data.code else None,
+                'content_type': data.content_type if data.content_type else None,
                 'url': data.url
             }, open(filename + ".meta", 'w'))
+
+
+            return filename
 
     def multi_fetch(self, url_requests, num_conn=100, percentile=100):
         """Get no more than 'percentile' % of requested urls,
@@ -433,7 +450,11 @@ class Browser(object):
             while queue and freelist:
                 url_data = queue.pop(0)
 
-                url = str(url_data["url"])
+                try:
+                    url = str(url_data["url"])
+                except UnicodeEncodeError:
+                    # IDNA url, need to encode it
+                    url = str(url_data["url"].encode("idna"))
 
                 curl = freelist.pop()
 
@@ -480,8 +501,8 @@ class Browser(object):
                        'method': "GET"
                     })
 
-                    self.__cache_response(result)
-
+                    result.file = self.__cache_response(result)
+                    
                     results[curl.url] = result
 
                     if self.cache_method in ["expire", "forever"]:
@@ -493,16 +514,32 @@ class Browser(object):
                         data_file.close()
 
                     freelist.append(curl)
-                    time.sleep(1.0)
 
                 for curl, errno, errmsg in err_list:
                     self.logger.debug("Error fetching %s" % curl.url)
                     curl.fp = None
                     mcurl.remove_handle(curl)
-                    results[curl.url] = Struct(**{'result': 'error',
+                    result = Struct(**{'result': 'error',
                                             'error': "%s %s" % (errno, errmsg),
                                             'id': curl.id,
-                                            'url': curl.url})
+                                            'url': curl.url,
+                                            'method': 'GET',
+                                            'data': None,
+                                            'code': None,
+                                            'content_type': None
+                                            })
+
+                    results[curl.url] = result
+
+                    if self.cache_method in ["expire", "forever"]:
+                        result.file = self.__cache_response(result)
+                        data_file = \
+                            open(self.__get_filename(curl.url, "GET"), 'w')
+
+                        data_file.write("")
+                        data_file.close()
+
+
                     freelist.append(curl)
 
                 num_processed = num_processed + len(ok_list) + len(err_list)
@@ -563,12 +600,12 @@ class Browser(object):
 
             if "xpath" in info:
 
+                # Get one element, "mode" can be ommited in this case
                 if not "mode" in info or info["mode"] == "single":
                     try:
                         data_list = list()
 
                         for entry in data_xml.xpath(info["xpath"]):
-
                             if isinstance(entry, etree._ElementStringResult) \
                             or isinstance(entry, etree._ElementUnicodeResult) \
                             or isinstance(entry, unicode)\
@@ -624,6 +661,9 @@ class Browser(object):
                 except AttributeError:
                     self.logger.exception("Couldn't execute regexp")
                     result[field] = None
+
+        # add lxml reference for additional document parsing by user
+        result["lxml_handle"] = data_xml
 
         return result
 

@@ -70,7 +70,8 @@ class ListParser(object):
 
         if self.count_extractor:
             ct = self.__get_page_count(data)
-            print "CT=",ct
+
+            self.logger.info("Last page num is %s" % ct)
 
             if not ct:
                 pages = []
@@ -86,6 +87,7 @@ class ListParser(object):
             pages = xrange(2, self.max_pages + 1)
 
         for page_num in pages:
+            self.logger.debug("Working on page %s" % page_num)
             data = self.__get_page(page_num)
 
             results.extend(self.__extract_page_data(data).items)
@@ -126,6 +128,8 @@ class SearchParser(ListParser):
                                         self.page_data_extractor)
                 data.link = url
                 lresults.append(data)
+            except (KeyboardInterrupt, SystemExit):
+                raise
             except:
                 self.logger.exception("Couldn't exract page data")
 
