@@ -501,6 +501,7 @@ class Browser(object):
                        'method': "GET"
                     })
 
+                    
                     result.file = self.__cache_response(result)
                     
                     results[curl.url] = result
@@ -581,7 +582,12 @@ class Browser(object):
 
             for field, info in extractor.fields.items():
                 if "xpath" in info:
-                    data_xml = fromstring(element)
+                    try:
+                        data_xml = fromstring(element)
+                    except:
+                        data_xml = None
+                        self.logger.exception("Couldn't parse element")
+
                     break
 
         # if we got tree element and we need to perform regexp
@@ -625,12 +631,15 @@ class Browser(object):
                 elif info["mode"] == "multi":
 
                     self.logger.debug("xpath_multi [%s]" % info["xpath"])
-                    elements = data_xml.xpath(info["xpath"])
                     results = list()
-                    for felement in elements:
-                        results.append(
-                            self.__get_str(felement, info)
-                        )
+
+                    if data_xml is not None:
+                        elements = data_xml.xpath(info["xpath"])
+
+                        for felement in elements:
+                            results.append(
+                                self.__get_str(felement, info)
+                            )
 
                     result[field] = results
                     
@@ -686,6 +695,14 @@ def init_simple_logger():
     browser_logger.addHandler(handler)
 
     search_logger = logging.getLogger("SearchParser")
+    search_logger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    handler.setFormatter(formatter)
+    search_logger.addHandler(handler)
+
+    search_logger = logging.getLogger("ListParser")
     search_logger.setLevel(logging.DEBUG)
     handler = logging.StreamHandler()
     handler.setLevel(logging.DEBUG)
